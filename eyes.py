@@ -15,6 +15,11 @@ from svg.path import Path, parse_path
 from xml.dom.minidom import parse
 from gfxutil import *
 from snake_eyes_bonnet import SnakeEyesBonnet
+import pygame
+import os, random
+pygame.mixer.init()
+
+
 
 # INPUT CONFIG for eye motion ----------------------------------------------
 # ANALOG INPUTS REQUIRE SNAKE EYES BONNET
@@ -34,6 +39,7 @@ BLINK_PIN       = 23    # GPIO pin for blink button (BOTH eyes)
 WINK_R_PIN      = 24    # GPIO pin for RIGHT eye wink button
 AUTOBLINK       = True  # If True, eyes blink autonomously
 CRAZY_EYES      = False # If True, each eye moves in different directions
+MOTION_SENSOR_PIN = 4
 
 
 # GPIO initialization ------------------------------------------------------
@@ -42,7 +48,8 @@ GPIO.setmode(GPIO.BCM)
 if WINK_L_PIN >= 0: GPIO.setup(WINK_L_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 if BLINK_PIN  >= 0: GPIO.setup(BLINK_PIN , GPIO.IN, pull_up_down=GPIO.PUD_UP)
 if WINK_R_PIN >= 0: GPIO.setup(WINK_R_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
+if MOTION_SENSOR_PIN >= 0:
+        GPIO.setup(MOTION_SENSOR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 # ADC stuff ----------------------------------------------------------------
 
@@ -84,7 +91,7 @@ DISPLAY.set_background(0, 0, 0, 1) # r,g,b,alpha
 # the center point of the screen to the center of each eye.  This geometry
 # is explained more in-depth in fbx2.c.
 eyePosition = DISPLAY.width / 4
-eyeRadius   = 128  # Default; use 240 for IPS screens
+eyeRadius   = 130  # Default; use 128 for IPS screens
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--radius", type=int)
@@ -289,6 +296,17 @@ blinkStartTimeRight = 0
 
 trackingPos = 0.3
 trackingPosR = 0.3
+timeOfLastMotion = 0.0
+musicPlayed = True
+
+def music():
+    if pygame.mixer.music.get_busy():
+        return
+    randomfile = random.choice(os.listdir("/boot/music"))
+    file = '/boot/music/'+ randomfile
+    print(file)
+    pygame.mixer.music.load(file)
+    pygame.mixer.music.play()
 
 # Generate one frame of imagery
 def frame(p):
@@ -316,17 +334,28 @@ def frame(p):
 	global blinkStartTimeLeft, blinkStartTimeRight
 	global trackingPos
 	global trackingPosR
-
+	global timeOfLastMotion
+	global musicPlayed
+	global motionTriggered
+	
 	DISPLAY.loop_running()
 
 	now = time.time()
 	dt  = now - startTime
 	dtR  = now - startTimeR
-
 	frames += 1
-#	if(now > beginningTime):
-#		print(frames/(now-beginningTime))
-
+	#print ("motion pin " + str( GPIO.input(MOTION_SENSOR_PIN)) )
+	#print ("low " + str( GPIO.LOW))
+	#print ("high " + str( GPIO.HIGH))
+	if (MOTION_SENSOR_PIN >= 0 and GPIO.input(MOTION_SENSOR_PIN) == GPIO.HIGH):
+		timeOfLastMotion = now
+		if  musicPlayed: 
+			musicThread = threading.Thread(target=music)
+			musicThread.start()
+			musicPlayed = False                                    
+	else:
+		musicPlayed = True
+	
 	if JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0:
 		# Eye position from analog inputs
 
@@ -420,9 +449,10 @@ def frame(p):
 			    ((BLINK_PIN >= 0 and    # blink pin held, or...
 			      GPIO.input(BLINK_PIN) == GPIO.LOW) or
 			    (WINK_L_PIN >= 0 and    # wink pin held
-			      GPIO.input(WINK_L_PIN) == GPIO.LOW))):
+			      GPIO.input(WINK_L_PIN) == GPIO.LOW) or
 				# Don't advance yet; eye is held closed
-				pass
+			    (MOTION_SENSOR_PIN >= 0 and now - timeOfLastMotion > 15.0))):
+					pass
 			else:
 				blinkStateLeft += 1
 				if blinkStateLeft > 2:
@@ -444,9 +474,11 @@ def frame(p):
 			    ((BLINK_PIN >= 0 and    # blink pin held, or...
 			      GPIO.input(BLINK_PIN) == GPIO.LOW) or
 			    (WINK_R_PIN >= 0 and    # wink pin held
-			      GPIO.input(WINK_R_PIN) == GPIO.LOW))):
+			      GPIO.input(WINK_R_PIN) == GPIO.LOW) or
+                (MOTION_SENSOR_PIN >= 0 and # no motion in 5 sec
+                  now - timeOfLastMotion > 15.0))):
 				# Don't advance yet; eye is held closed
-				pass
+					pass
 			else:
 				blinkStateRight += 1
 				if blinkStateRight > 2:
